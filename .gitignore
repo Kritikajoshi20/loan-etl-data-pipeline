@@ -1,0 +1,19 @@
+# Environment files
+.env
+
+# Credentials
+airflow/credentials/*.json
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Airflow logs
+logs/
+
+# Downloads & outputs
+downloads/
+etl/output/
+
+# OS files
+.DS_Store

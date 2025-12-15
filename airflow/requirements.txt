@@ -1,0 +1,10 @@
+pandas
+pyarrow
+boto3
+s3fs
+pyspark==3.4.1
+google-api-python-client
+google-auth
+google-auth-httplib2
+google-auth-oauthlib
+openpyxl

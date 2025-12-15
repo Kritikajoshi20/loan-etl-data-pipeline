@@ -1,0 +1,129 @@
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres_db:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+  minio:
+    image: minio/minio:latest
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    # ensure console is on a stable port (9001) and S3 API on 9000
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web Console
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+
+  airflow-init:
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    depends_on:
+      - postgres
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      GOOGLE_APPLICATION_CREDENTIALS: /opt/airflow/credentials/gdrive-service-account.json
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./airflow/credentials:/opt/airflow/credentials
+      - ./etl:/opt/etl
+      - ./airflow/requirements.txt:/opt/airflow/requirements/requirements.txt:ro
+    entrypoint: >
+      bash -c "pip install --no-cache-dir -r /opt/airflow/requirements/requirements.txt || true;
+               airflow db upgrade;
+               airflow users create -r Admin -u admin -p admin -e admin@example.com -f Air -l Flow || true"
+    restart: "no"
+
+  airflow-webserver:
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    depends_on:
+      - airflow-init
+      - postgres
+      - minio
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY}
+      PYTHONPATH: "/opt"
+      # Gmail SMTP config (use values from .env)
+      AIRFLOW__EMAIL__SMTP_HOST: ${AIRFLOW__EMAIL__SMTP_HOST}
+      AIRFLOW__EMAIL__SMTP_PORT: ${AIRFLOW__EMAIL__SMTP_PORT}
+      AIRFLOW__EMAIL__SMTP_STARTTLS: ${AIRFLOW__EMAIL__SMTP_STARTTLS}
+      AIRFLOW__EMAIL__SMTP_SSL: ${AIRFLOW__EMAIL__SMTP_SSL}
+      AIRFLOW__EMAIL__SMTP_USER: ${AIRFLOW__EMAIL__SMTP_USER}
+      AIRFLOW__EMAIL__SMTP_PASSWORD: ${AIRFLOW__EMAIL__SMTP_PASSWORD}
+      AIRFLOW__EMAIL__SMTP_MAIL_FROM: ${AIRFLOW__EMAIL__SMTP_MAIL_FROM}
+      GOOGLE_APPLICATION_CREDENTIALS: /opt/airflow/credentials/gdrive-service-account.json
+      # optionally set AIRFLOW_UID if needed for file ownership on host
+      AIRFLOW_UID: ${AIRFLOW_UID:-50000}
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./airflow/credentials:/opt/airflow/credentials
+      - ./etl:/opt/etl
+      - ./downloads:/opt/airflow/downloads
+      - ./airflow/requirements.txt:/opt/airflow/requirements/requirements.txt:ro
+    ports:
+      - "8080:8080"
+    command: >
+      bash -c "pip install --no-cache-dir -r /opt/airflow/requirements/requirements.txt || true;
+               airflow webserver --port 8080"
+    restart: unless-stopped
+
+  airflow-scheduler:
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    depends_on:
+      - airflow-webserver
+      - postgres
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY}
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY}
+      PYTHONPATH: "/opt"
+      # Gmail SMTP (scheduler may need SMTP for task notifications)
+      AIRFLOW__EMAIL__SMTP_HOST: ${AIRFLOW__EMAIL__SMTP_HOST}
+      AIRFLOW__EMAIL__SMTP_PORT: ${AIRFLOW__EMAIL__SMTP_PORT}
+      AIRFLOW__EMAIL__SMTP_STARTTLS: ${AIRFLOW__EMAIL__SMTP_STARTTLS}
+      AIRFLOW__EMAIL__SMTP_SSL: ${AIRFLOW__EMAIL__SMTP_SSL}
+      AIRFLOW__EMAIL__SMTP_USER: ${AIRFLOW__EMAIL__SMTP_USER}
+      AIRFLOW__EMAIL__SMTP_PASSWORD: ${AIRFLOW__EMAIL__SMTP_PASSWORD}
+      AIRFLOW__EMAIL__SMTP_MAIL_FROM: ${AIRFLOW__EMAIL__SMTP_MAIL_FROM}
+      GOOGLE_APPLICATION_CREDENTIALS: /opt/airflow/credentials/gdrive-service-account.json
+      AIRFLOW_UID: ${AIRFLOW_UID:-50000}
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./airflow/credentials:/opt/airflow/credentials
+      - ./etl:/opt/etl
+      - ./airflow/requirements.txt:/opt/airflow/requirements/requirements.txt:ro
+      - ./downloads:/opt/airflow/downloads
+    command: >
+      bash -c "pip install --no-cache-dir -r /opt/airflow/requirements/requirements.txt || true;
+               airflow scheduler"
+    restart: unless-stopped
+
+volumes:
+  postgres_db:
+  minio_data:
+
