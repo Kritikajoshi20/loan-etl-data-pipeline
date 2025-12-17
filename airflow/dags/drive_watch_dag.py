@@ -16,9 +16,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
-# -------------------------
 # Configuration (tweak via env or Airflow Variables)
-# -------------------------
 SERVICE_ACCOUNT_PATH = "/opt/airflow/credentials/gdrive-service-account.json"
 DOWNLOAD_DIR = "/opt/airflow/downloads"
 MINIO_INTERNAL_ENDPOINT = os.environ.get("MINIO_INTERNAL_URL", "http://minio:9000")
@@ -41,7 +39,7 @@ with DAG(
     catchup=False,
 ) as dag:
 
-    # GoogleDriveSensor plugin (assumes you have a plugin named google_drive_sensor.py in plugins)
+    # GoogleDriveSensor plugin
     from google_drive_sensor import GoogleDriveSensor
 
     wait_for_file = GoogleDriveSensor(
@@ -51,9 +49,7 @@ with DAG(
         timeout=60 * 60 * 6,
     )
 
-    # -------------------------
     # Download from Google Drive and compress
-    # -------------------------
     def download_and_compress(**context):
         ti = context["ti"]
         new_files = ti.xcom_pull(key="gdrive_new_files", task_ids="wait_for_gdrive_file")
@@ -142,9 +138,7 @@ with DAG(
         python_callable=download_and_compress,
     )
 
-    # -------------------------
     # Upload compressed files to MinIO and generate presigned URLs
-    # -------------------------
     def upload_to_minio_and_presign(**context):
         ti = context["ti"]
         metas = ti.xcom_pull(key="file_meta", task_ids="download_and_compress") or []
@@ -192,7 +186,6 @@ with DAG(
                 logging.exception("Failed upload %s to MinIO", comp)
                 raise
 
-            # presign
             try:
                 url = s3_presign.generate_presigned_url(
                     ClientMethod="get_object",
@@ -211,15 +204,13 @@ with DAG(
 
         ti.xcom_push(key="minio_uploads", value=results)
         return results
-
+        
     t_upload = PythonOperator(
         task_id="upload_to_minio",
         python_callable=upload_to_minio_and_presign,
     )
 
-    # -------------------------
     # Send email to your Gmail (SMTP_USER)
-    # -------------------------
     def send_email_notify(**context):
         ti = context["ti"]
         uploads = ti.xcom_pull(key="minio_uploads", task_ids="upload_to_minio") or []
@@ -272,7 +263,7 @@ with DAG(
                 else:
                     logging.info("Skipping attachment %s (size %d)", comp, size)
 
-        # SMTP config from environment (must be present in your .env and compose)
+        # SMTP config from environment
         smtp_host = os.environ.get("AIRFLOW__EMAIL__SMTP_HOST")
         smtp_port = int(os.environ.get("AIRFLOW__EMAIL__SMTP_PORT", "587"))
         smtp_user = os.environ.get("AIRFLOW__EMAIL__SMTP_USER")
